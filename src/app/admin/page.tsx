@@ -109,18 +109,20 @@ export default async function AdminPage() {
   let submissions: Submission[] = [];
 
   if (producerIds.length > 0) {
-    const [{ data: linksData, error: linksError }, { data: submissionsData, error: submissionsError }] =
-      await Promise.all([
-        supabase
-          .from("producer_links")
-          .select("producer_id, token, is_active, created_at")
-          .in("producer_id", producerIds)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("submissions")
-          .select("producer_id, period_id, status, submitted_at, last_saved_at")
-          .in("producer_id", producerIds),
-      ]);
+    const [
+      { data: linksData, error: linksError },
+      { data: submissionsData, error: submissionsError },
+    ] = await Promise.all([
+      supabase
+        .from("producer_links")
+        .select("producer_id, token, is_active, created_at")
+        .in("producer_id", producerIds)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("submissions")
+        .select("producer_id, period_id, status, submitted_at, last_saved_at")
+        .in("producer_id", producerIds),
+    ]);
 
     if (linksError) {
       throw new Error(`producer_links取得失敗: ${linksError.message}`);
@@ -231,7 +233,9 @@ export default async function AdminPage() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">未提出</p>
-            <p className="mt-2 text-3xl font-bold text-slate-900">{notSubmittedCount}</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">
+              {notSubmittedCount}
+            </p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -241,7 +245,9 @@ export default async function AdminPage() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">提出済み</p>
-            <p className="mt-2 text-3xl font-bold text-emerald-600">{submittedCount}</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-600">
+              {submittedCount}
+            </p>
           </div>
         </section>
 
@@ -328,6 +334,13 @@ export default async function AdminPage() {
 
                         <td className="px-4 py-4">
                           <div className="flex flex-col gap-2">
+                            <Link
+                              href={`/admin/submissions/${row.id}`}
+                              className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-center text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                            >
+                              閲覧
+                            </Link>
+
                             <form action={regenerateProducerUrlAction}>
                               <input type="hidden" name="producer_id" value={row.id} />
                               <button
