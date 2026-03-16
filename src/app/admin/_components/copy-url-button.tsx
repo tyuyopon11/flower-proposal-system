@@ -1,31 +1,37 @@
-"use client"
+"use client";
 
-import { useState } from "react"
+import { useState } from "react";
 
 type CopyUrlButtonProps = {
-  url: string
-}
+  url: string;
+};
 
 export default function CopyUrlButton({ url }: CopyUrlButtonProps) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleCopy = async () => {
+    setError(null);
+
     try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      alert("URLのコピーに失敗しました")
+      setError("コピー失敗");
     }
-  }
+  };
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="rounded bg-slate-700 px-3 py-1 text-sm text-white hover:bg-slate-800"
-    >
-      {copied ? "コピー済み" : "URLコピー"}
-    </button>
-  )
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+      >
+        {copied ? "コピー済み" : "コピー"}
+      </button>
+      {error && <span className="text-[11px] text-red-600">{error}</span>}
+    </div>
+  );
 }

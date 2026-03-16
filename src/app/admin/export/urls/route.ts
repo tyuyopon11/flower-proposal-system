@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { buildEntryUrl } from "../../../../lib/app-url";
+import { buildEntryUrl } from "@/lib/app-url";
 
 type Producer = {
   id: string;
@@ -51,16 +51,16 @@ export async function GET() {
     links = (linksData ?? []) as ProducerLink[];
   }
 
-  const latestLinkMap = new Map<string, ProducerLink>();
+  const latestActiveLinkMap = new Map<string, ProducerLink>();
 
   for (const link of links) {
-    if (!latestLinkMap.has(link.producer_id)) {
-      latestLinkMap.set(link.producer_id, link);
+    if (!latestActiveLinkMap.has(link.producer_id) && link.is_active !== false) {
+      latestActiveLinkMap.set(link.producer_id, link);
     }
   }
 
   const rows = producerList.map((producer) => {
-    const link = latestLinkMap.get(producer.id);
+    const link = latestActiveLinkMap.get(producer.id);
 
     return {
       producer_name: producer.producer_name,
@@ -71,6 +71,7 @@ export async function GET() {
   });
 
   const header = ["生産者名", "token", "有効", "入力URL"];
+
   const body = rows.map((row) => [
     row.producer_name,
     row.token,
@@ -84,7 +85,7 @@ export async function GET() {
     )
     .join("\r\n");
 
-  return new NextResponse("\uFEFF" + csv, {
+  return new NextResponse(`\uFEFF${csv}`, {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

@@ -1,44 +1,50 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { buildEntryUrl } from "@/lib/app-url";
+import CopyUrlButton from "./_components/copy-url-button";
 import {
   deleteProducerAction,
   regenerateProducerUrlAction,
 } from "./actions";
 
 type Producer = {
-  id: string;
-  producer_name: string;
+  id: number | string;
+  producer_name: string | null;
 };
 
 type ProducerLink = {
-  producer_id: string;
-  token: string;
+  producer_id: number | string;
+  token: string | null;
   is_active: boolean | null;
   created_at: string | null;
 };
 
 type Submission = {
-  producer_id: string;
+  producer_id: number | string;
+  period_id: number | string | null;
   status: string | null;
-  updated_at: string | null;
   submitted_at: string | null;
+  last_saved_at: string | null;
 };
 
 type AdminRow = {
   id: string;
   producer_name: string;
   status: string | null;
-  updated_at: string | null;
+  last_saved_at: string | null;
   submitted_at: string | null;
   token: string | null;
   is_active: boolean | null;
 };
 
+function toId(value: number | string) {
+  return String(value);
+}
+
 function formatDate(value: string | null) {
   if (!value) return "-";
 
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) return "-";
 
   return new Intl.DateTimeFormat("ja-JP", {
@@ -53,8 +59,10 @@ function formatDate(value: string | null) {
 function getStatusLabel(status: string | null) {
   switch (status) {
     case "draft":
+    case "下書き":
       return "下書き";
     case "submitted":
+    case "提出済み":
       return "提出済み";
     default:
       return "未提出";
@@ -64,18 +72,28 @@ function getStatusLabel(status: string | null) {
 function getStatusClass(status: string | null) {
   switch (status) {
     case "draft":
+    case "下書き":
       return "bg-yellow-100 text-yellow-800";
     case "submitted":
-      return "bg-green-100 text-green-800";
+    case "提出済み":
+      return "bg-emerald-100 text-emerald-800";
     default:
-      return "bg-gray-100 text-gray-700";
+      return "bg-slate-100 text-slate-700";
   }
+}
+
+function getSubmissionSortTime(submission: Submission) {
+  const base = submission.last_saved_at ?? submission.submitted_at ?? null;
+  if (!base) return 0;
+
+  const time = new Date(base).getTime();
+  return Number.isNaN(time) ? 0 : time;
 }
 
 export default async function AdminPage() {
   const supabase = await createClient();
 
-  const { data: producers, error: producersError } = await supabase
+  const { data: producersData, error: producersError } = await supabase
     .from("producers")
     .select("id, producer_name")
     .order("producer_name", { ascending: true });
@@ -84,101 +102,75 @@ export default async function AdminPage() {
     throw new Error(`producers取得失敗: ${producersError.message}`);
   }
 
-  const producerList = (producers ?? []) as Producer[];
-  const producerIds = producerList.map((producer) => producer.id);
+  const producers = (producersData ?? []) as Producer[];
+  const producerIds = producers.map((producer) => producer.id);
 
   let links: ProducerLink[] = [];
   let submissions: Submission[] = [];
 
   if (producerIds.length > 0) {
-    const { data: linksData, error: linksError } = await supabase
-      .from("producer_links")
-      .select("producer_id, token, is_active, created_at")
-      .in("producer_id", producerIds)
-      .order("created_at", { ascending: false });
+    const [{ data: linksData, error: linksError }, { data: submissionsData, error: submissionsError }] =
+      await Promise.all([
+        supabase
+          .from("producer_links")
+          .select("producer_id, token, is_active, created_at")
+          .in("producer_id", producerIds)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("submissions")
+          .select("producer_id, period_id, status, submitted_at, last_saved_at")
+          .in("producer_id", producerIds),
+      ]);
 
     if (linksError) {
       throw new Error(`producer_links取得失敗: ${linksError.message}`);
     }
 
-    links = (linksData ?? []) as ProducerLink[];
-
-    const { data: submissionsData, error: submissionsError } = await supabase
-      .from("submissions")
-      .select("producer_id, status, updated_at, submitted_at");
-
     if (submissionsError) {
       throw new Error(`submissions取得失敗: ${submissionsError.message}`);
     }
 
-    submissions = ((submissionsData ?? []) as Submission[]).filter((item) =>
-      producerIds.includes(item.producer_id)
-    );
+    links = (linksData ?? []) as ProducerLink[];
+    submissions = (submissionsData ?? []) as Submission[];
   }
 
-  const latestLinkMap = new Map<
-    string,
-    {
-      token: string | null;
-      is_active: boolean | null;
-    }
-  >();
+  const latestActiveLinkMap = new Map<string, ProducerLink>();
 
   for (const link of links) {
-    if (!latestLinkMap.has(link.producer_id) && link.is_active !== false) {
-      latestLinkMap.set(link.producer_id, {
-        token: link.token,
-        is_active: link.is_active,
-      });
-    }
+    const producerId = toId(link.producer_id);
+
+    if (link.is_active === false) continue;
+    if (latestActiveLinkMap.has(producerId)) continue;
+
+    latestActiveLinkMap.set(producerId, link);
   }
 
-  const submissionMap = new Map<
-    string,
-    {
-      status: string | null;
-      updated_at: string | null;
-      submitted_at: string | null;
-    }
-  >();
+  const latestSubmissionMap = new Map<string, Submission>();
 
   for (const submission of submissions) {
-    const existing = submissionMap.get(submission.producer_id);
+    const producerId = toId(submission.producer_id);
+    const current = latestSubmissionMap.get(producerId);
 
-    if (!existing) {
-      submissionMap.set(submission.producer_id, {
-        status: submission.status,
-        updated_at: submission.updated_at,
-        submitted_at: submission.submitted_at,
-      });
+    if (!current) {
+      latestSubmissionMap.set(producerId, submission);
       continue;
     }
 
-    const existingTime = existing.updated_at
-      ? new Date(existing.updated_at).getTime()
-      : 0;
-    const currentTime = submission.updated_at
-      ? new Date(submission.updated_at).getTime()
-      : 0;
-
-    if (currentTime >= existingTime) {
-      submissionMap.set(submission.producer_id, {
-        status: submission.status,
-        updated_at: submission.updated_at,
-        submitted_at: submission.submitted_at,
-      });
+    if (getSubmissionSortTime(submission) >= getSubmissionSortTime(current)) {
+      latestSubmissionMap.set(producerId, submission);
     }
   }
 
-  const rows: AdminRow[] = producerList.map((producer) => {
-    const link = latestLinkMap.get(producer.id);
-    const submission = submissionMap.get(producer.id);
+  const rows: AdminRow[] = producers.map((producer) => {
+    const producerId = toId(producer.id);
+    const link = latestActiveLinkMap.get(producerId);
+    const submission = latestSubmissionMap.get(producerId);
 
     return {
-      id: producer.id,
-      producer_name: producer.producer_name,
+      id: producerId,
+      producer_name: producer.producer_name ?? "名称未設定",
       status: submission?.status ?? null,
-      updated_at: submission?.updated_at ?? null,
+      last_saved_at: submission?.last_saved_at ?? null,
       submitted_at: submission?.submitted_at ?? null,
       token: link?.token ?? null,
       is_active: link?.is_active ?? null,
@@ -187,20 +179,22 @@ export default async function AdminPage() {
 
   const totalCount = rows.length;
   const notSubmittedCount = rows.filter((row) => !row.status).length;
-  const draftCount = rows.filter((row) => row.status === "draft").length;
-  const submittedCount = rows.filter((row) => row.status === "submitted").length;
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const draftCount = rows.filter(
+    (row) => row.status === "draft" || row.status === "下書き"
+  ).length;
+  const submittedCount = rows.filter(
+    (row) => row.status === "submitted" || row.status === "提出済み"
+  ).length;
 
   return (
-    <main className="min-h-screen bg-gray-50 px-6 py-8">
+    <main className="min-h-screen bg-slate-50 px-4 py-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-slate-900">
               花き提案回収システム 管理画面
             </h1>
-            <p className="mt-2 text-sm text-gray-600">
+            <p className="mt-2 text-sm text-slate-600">
               生産者ごとの提出状況、入力URL、各種操作を確認できます。
             </p>
           </div>
@@ -208,98 +202,91 @@ export default async function AdminPage() {
           <div className="flex flex-wrap gap-3">
             <Link
               href="/admin/producers/new"
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
             >
               生産者追加
             </Link>
-            <a
+
+            <Link
               href="/admin/export/urls"
-              className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50"
+              className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
             >
               URL一覧CSV
-            </a>
-            <a
+            </Link>
+
+            <Link
               href="/admin/export/unsubmitted"
-              className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50"
+              className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
             >
               未提出CSV
-            </a>
+            </Link>
           </div>
         </div>
 
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-            <p className="text-sm text-gray-500">総生産者数</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">{totalCount}</p>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">総生産者数</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{totalCount}</p>
           </div>
 
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-            <p className="text-sm text-gray-500">未提出</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
-              {notSubmittedCount}
-            </p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">未提出</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{notSubmittedCount}</p>
           </div>
 
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-            <p className="text-sm text-gray-500">下書き</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">{draftCount}</p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">下書き</p>
+            <p className="mt-2 text-3xl font-bold text-yellow-600">{draftCount}</p>
           </div>
 
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-            <p className="text-sm text-gray-500">提出済み</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
-              {submittedCount}
-            </p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">提出済み</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-600">{submittedCount}</p>
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-          <div className="border-b border-gray-200 px-6 py-4">
-            <h2 className="text-lg font-semibold text-gray-900">提出状況一覧</h2>
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-6 py-4">
+            <h2 className="text-lg font-semibold text-slate-900">提出状況一覧</h2>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-sm">
-              <thead className="bg-gray-50">
-                <tr className="border-b border-gray-200">
-                  <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                    生産者
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                    状態
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                    最終保存
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                    提出日時
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                    入力URL
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                    操作
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {rows.length === 0 ? (
+          {rows.length === 0 ? (
+            <div className="px-6 py-10 text-center text-sm text-slate-500">
+              生産者データがありません
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
-                      生産者データがありません
-                    </td>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                      生産者
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                      状態
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                      最終保存
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                      提出日時
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                      入力URL
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                      操作
+                    </th>
                   </tr>
-                ) : (
-                  rows.map((row) => {
-                    const entryUrl = row.token ? `${appUrl}/entry/${row.token}` : null;
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map((row) => {
+                    const entryUrl = row.token ? buildEntryUrl(row.token) : null;
 
                     return (
-                      <tr
-                        key={row.id}
-                        className="border-b border-gray-100 align-top last:border-b-0"
-                      >
-                        <td className="px-4 py-4 font-medium text-gray-900">
+                      <tr key={row.id} className="align-top">
+                        <td className="px-4 py-4 font-medium text-slate-900">
                           {row.producer_name}
                         </td>
 
@@ -313,54 +300,49 @@ export default async function AdminPage() {
                           </span>
                         </td>
 
-                        <td className="px-4 py-4 text-gray-700">
-                          {formatDate(row.updated_at)}
+                        <td className="px-4 py-4 text-slate-600">
+                          {formatDate(row.last_saved_at)}
                         </td>
 
-                        <td className="px-4 py-4 text-gray-700">
+                        <td className="px-4 py-4 text-slate-600">
                           {formatDate(row.submitted_at)}
                         </td>
 
                         <td className="px-4 py-4">
                           {entryUrl ? (
-                            <a
-                              href={entryUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="break-all text-blue-600 underline hover:text-blue-800"
-                            >
-                              {entryUrl}
-                            </a>
+                            <div className="space-y-2">
+                              <a
+                                href={entryUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block max-w-[320px] break-all text-emerald-700 underline underline-offset-2"
+                              >
+                                {entryUrl}
+                              </a>
+                              <CopyUrlButton url={entryUrl} />
+                            </div>
                           ) : (
-                            <span className="text-gray-400">URL未発行</span>
+                            <span className="text-slate-400">URL未発行</span>
                           )}
                         </td>
 
                         <td className="px-4 py-4">
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-col gap-2">
                             <form action={regenerateProducerUrlAction}>
-                              <input
-                                type="hidden"
-                                name="producer_id"
-                                value={row.id}
-                              />
+                              <input type="hidden" name="producer_id" value={row.id} />
                               <button
                                 type="submit"
-                                className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-medium text-white hover:bg-amber-600"
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                               >
                                 URL再発行
                               </button>
                             </form>
 
                             <form action={deleteProducerAction}>
-                              <input
-                                type="hidden"
-                                name="producer_id"
-                                value={row.id}
-                              />
+                              <input type="hidden" name="producer_id" value={row.id} />
                               <button
                                 type="submit"
-                                className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+                                className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50"
                               >
                                 削除
                               </button>
@@ -369,11 +351,11 @@ export default async function AdminPage() {
                         </td>
                       </tr>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
     </main>
