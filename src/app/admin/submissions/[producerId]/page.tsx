@@ -30,6 +30,30 @@ type SubmissionRecord = {
   [key: string]: unknown;
 };
 
+type SubmissionItemRecord = {
+  id?: number | string;
+  submission_id?: number | string | null;
+  item_no?: number | string | null;
+  display_order?: number | string | null;
+  product_name?: string | null;
+  item_name?: string | null;
+  flower_name?: string | null;
+  spec?: string | null;
+  standard?: string | null;
+  quantity?: string | number | null;
+  qty?: string | number | null;
+  price?: string | number | null;
+  unit_price?: string | number | null;
+  shipping_month_1?: string | null;
+  shipping_month_2?: string | null;
+  shipping_date?: string | null;
+  notes?: string | null;
+  remark?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+};
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
 
@@ -74,6 +98,53 @@ function getStatusClass(status: string | null | undefined) {
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
+}
+
+function getItemName(item: SubmissionItemRecord) {
+  return (
+    item.product_name ??
+    item.item_name ??
+    item.flower_name ??
+    "-"
+  );
+}
+
+function getItemSpec(item: SubmissionItemRecord) {
+  return item.spec ?? item.standard ?? "-";
+}
+
+function getItemQuantity(item: SubmissionItemRecord) {
+  return item.quantity ?? item.qty ?? "-";
+}
+
+function getItemPrice(item: SubmissionItemRecord) {
+  return item.price ?? item.unit_price ?? "-";
+}
+
+function getItemShipping1(item: SubmissionItemRecord) {
+  return item.shipping_month_1 ?? item.shipping_date ?? "-";
+}
+
+function getItemShipping2(item: SubmissionItemRecord) {
+  return item.shipping_month_2 ?? "-";
+}
+
+function getItemNotes(item: SubmissionItemRecord) {
+  return item.notes ?? item.remark ?? "-";
+}
+
+function getItemSortValue(item: SubmissionItemRecord) {
+  const displayOrder = Number(item.display_order ?? item.item_no ?? 0);
+  if (!Number.isNaN(displayOrder) && displayOrder > 0) {
+    return displayOrder;
+  }
+
+  const idNumber = Number(item.id ?? 0);
+  if (!Number.isNaN(idNumber) && idNumber > 0) {
+    return idNumber;
+  }
+
+  return 999999;
 }
 
 export default async function AdminSubmissionDetailPage({
@@ -121,9 +192,26 @@ export default async function AdminSubmissionDetailPage({
   const latestSubmission = submissionList[0] ?? null;
   const producerData = producer as Producer;
 
+  let submissionItems: SubmissionItemRecord[] = [];
+
+  if (latestSubmission?.id) {
+    const { data: itemsData, error: itemsError } = await supabase
+      .from("submission_items")
+      .select("*")
+      .eq("submission_id", latestSubmission.id);
+
+    if (itemsError) {
+      throw new Error(`submission_items取得失敗: ${itemsError.message}`);
+    }
+
+    submissionItems = ((itemsData ?? []) as SubmissionItemRecord[]).sort(
+      (a, b) => getItemSortValue(a) - getItemSortValue(b)
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8">
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm text-slate-500">提出内容閲覧</p>
@@ -242,6 +330,94 @@ export default async function AdminSubmissionDetailPage({
                   {displayValue(latestSubmission.notes)}
                 </p>
               </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    提出商品一覧
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    submission_items に保存されている商品明細を表示します。
+                  </p>
+                </div>
+                <div className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+                  {submissionItems.length} 件
+                </div>
+              </div>
+
+              {submissionItems.length === 0 ? (
+                <div className="mt-6 rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  submission_items に商品明細がまだありません。
+                </div>
+              ) : (
+                <div className="mt-6 overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          No
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          商品名
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          規格
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          数量
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          価格
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          出荷月1
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          出荷月2
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-700">
+                          備考
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {submissionItems.map((item, index) => (
+                        <tr key={String(item.id ?? index)}>
+                          <td className="px-4 py-3 text-slate-600">
+                            {index + 1}
+                          </td>
+                          <td className="px-4 py-3 font-medium text-slate-900">
+                            {displayValue(getItemName(item))}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {displayValue(getItemSpec(item))}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {displayValue(getItemQuantity(item))}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {displayValue(getItemPrice(item))}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {displayValue(getItemShipping1(item))}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {displayValue(getItemShipping2(item))}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div className="max-w-[280px] whitespace-pre-wrap">
+                              {displayValue(getItemNotes(item))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
