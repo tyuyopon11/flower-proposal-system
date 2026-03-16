@@ -119,7 +119,6 @@ export default async function AdminSubmissionDetailPage({
   );
 
   const latestSubmission = submissionList[0] ?? null;
-
   const producerData = producer as Producer;
 
   return (
@@ -136,14 +135,12 @@ export default async function AdminSubmissionDetailPage({
             </p>
           </div>
 
-          <div className="flex gap-3">
-            <Link
-              href="/admin"
-              className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-            >
-              管理画面に戻る
-            </Link>
-          </div>
+          <Link
+            href="/admin"
+            className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+          >
+            管理画面に戻る
+          </Link>
         </div>
 
         <section className="grid gap-4 md:grid-cols-4">
@@ -252,7 +249,7 @@ export default async function AdminSubmissionDetailPage({
                 生データ確認
               </h2>
               <p className="mt-2 text-sm text-slate-500">
-                今後の項目追加に備えて、現在保存されている submission レコード全体を表示しています。
+                現在保存されている submission レコード全体を表示しています。
               </p>
 
               <pre className="mt-4 overflow-x-auto rounded-xl bg-slate-900 p-4 text-xs text-slate-100">

@@ -342,7 +342,11 @@ export default async function AdminPage() {
                             </Link>
 
                             <form action={regenerateProducerUrlAction}>
-                              <input type="hidden" name="producer_id" value={row.id} />
+                              <input
+                                type="hidden"
+                                name="producer_id"
+                                value={row.id}
+                              />
                               <button
                                 type="submit"
                                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -352,7 +356,11 @@ export default async function AdminPage() {
                             </form>
 
                             <form action={deleteProducerAction}>
-                              <input type="hidden" name="producer_id" value={row.id} />
+                              <input
+                                type="hidden"
+                                name="producer_id"
+                                value={row.id}
+                              />
                               <button
                                 type="submit"
                                 className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50"
