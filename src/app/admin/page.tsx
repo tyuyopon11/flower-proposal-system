@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { deleteProducerAction } from "./actions";
+import {
+  deleteProducerAction,
+  regenerateProducerUrlAction,
+} from "./actions";
 
 type Producer = {
   id: string;
@@ -36,9 +39,7 @@ function formatDate(value: string | null) {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
+  if (Number.isNaN(date.getTime())) return "-";
 
   return new Intl.DateTimeFormat("ja-JP", {
     year: "numeric",
@@ -124,7 +125,7 @@ export default async function AdminPage() {
   >();
 
   for (const link of links) {
-    if (!latestLinkMap.has(link.producer_id)) {
+    if (!latestLinkMap.has(link.producer_id) && link.is_active !== false) {
       latestLinkMap.set(link.producer_id, {
         token: link.token,
         is_active: link.is_active,
@@ -337,6 +338,20 @@ export default async function AdminPage() {
 
                         <td className="px-4 py-4">
                           <div className="flex flex-wrap gap-2">
+                            <form action={regenerateProducerUrlAction}>
+                              <input
+                                type="hidden"
+                                name="producer_id"
+                                value={row.id}
+                              />
+                              <button
+                                type="submit"
+                                className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-medium text-white hover:bg-amber-600"
+                              >
+                                URL再発行
+                              </button>
+                            </form>
+
                             <form action={deleteProducerAction}>
                               <input
                                 type="hidden"
