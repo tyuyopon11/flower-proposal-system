@@ -1,92 +1,44 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { buildEntryUrl } from "@/lib/app-url";
 
-type Producer = {
-  id: string;
+type AdminSubmissionStatusRow = {
+  id: number;
   producer_name: string;
-};
-
-type ProducerLink = {
-  producer_id: string;
   token: string;
-  is_active: boolean | null;
-  created_at: string | null;
 };
 
 export async function GET() {
   const supabase = await createClient();
 
-  const { data: producers, error: producersError } = await supabase
-    .from("producers")
-    .select("id, producer_name")
-    .order("producer_name", { ascending: true });
+  const { data, error } = await supabase
+    .from("admin_submission_status")
+    .select("*")
+    .order("id");
 
-  if (producersError) {
+  if (error) {
     return NextResponse.json(
-      { error: `producers取得失敗: ${producersError.message}` },
+      { error: `admin_submission_status取得失敗: ${error.message}` },
       { status: 500 }
     );
   }
 
-  const producerList = (producers ?? []) as Producer[];
-  const producerIds = producerList.map((producer) => producer.id);
-
-  let links: ProducerLink[] = [];
-
-  if (producerIds.length > 0) {
-    const { data: linksData, error: linksError } = await supabase
-      .from("producer_links")
-      .select("producer_id, token, is_active, created_at")
-      .in("producer_id", producerIds)
-      .order("created_at", { ascending: false });
-
-    if (linksError) {
-      return NextResponse.json(
-        { error: `producer_links取得失敗: ${linksError.message}` },
-        { status: 500 }
-      );
-    }
-
-    links = (linksData ?? []) as ProducerLink[];
-  }
-
-  const latestActiveLinkMap = new Map<string, ProducerLink>();
-
-  for (const link of links) {
-    if (!latestActiveLinkMap.has(link.producer_id) && link.is_active !== false) {
-      latestActiveLinkMap.set(link.producer_id, link);
-    }
-  }
-
-  const rows = producerList.map((producer) => {
-    const link = latestActiveLinkMap.get(producer.id);
+  const rows = ((data ?? []) as AdminSubmissionStatusRow[]).map((row) => {
+    const baseUrl =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_APP_BASE_URL ||
+      "https://flower-proposal-system.vercel.app";
 
     return {
-      producer_name: producer.producer_name,
-      token: link?.token ?? "",
-      is_active: link?.is_active ?? false,
-      entry_url: link?.token ? buildEntryUrl(link.token) : "",
+      producer: row.producer_name,
+      url: `${baseUrl}/entry/${row.token}`,
     };
   });
 
-  const header = ["生産者名", "token", "有効", "入力URL"];
+  const csv =
+    "producer,url\n" +
+    rows.map((r) => `${r.producer},${r.url}`).join("\n");
 
-  const body = rows.map((row) => [
-    row.producer_name,
-    row.token,
-    row.is_active ? "TRUE" : "FALSE",
-    row.entry_url,
-  ]);
-
-  const csv = [header, ...body]
-    .map((line) =>
-      line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")
-    )
-    .join("\r\n");
-
-  return new NextResponse(`\uFEFF${csv}`, {
-    status: 200,
+  return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="producer-urls.csv"',
