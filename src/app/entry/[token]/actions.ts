@@ -147,7 +147,6 @@ async function replaceSubmissionItems(params: {
     .from("submission_items")
     .insert({
       submission_id: submissionId,
-      display_order: 1,
       product_name: productName || null,
       spec: spec || null,
       quantity: quantity || null,
