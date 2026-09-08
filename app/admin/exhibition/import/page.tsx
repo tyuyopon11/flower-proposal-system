@@ -76,6 +76,17 @@ export default function ExhibitionImportPage() {
         <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-7 text-amber-900">
           商品番号・商品名・入数・数量（ケース数）・価格は必須です。
           列名または列順が正式テンプレートと異なるファイルは取り込みません。
+          <p className="mt-3">
+            P〜S列は「受付開始日・受付終了日・販売開始日・販売終了日」です。
+            予約受付期間と販売期間はそれぞれ任意で、開始日と終了日をセットで入力すると期間設定が有効になります。
+            両方空欄なら期間設定なしです。有効／無効の入力は不要です。
+          </p>
+          <p className="mt-2">
+            日付はYYYY-MM-DD（例：2026-09-08）で入力してください。
+            終了日は開始日以降にしてください（同日も可）。
+            期間列のない旧Excelも、両期間とも設定なしとして取り込めます。
+            「展示会設定」シートの日付は商品の期間設定には使用しません。
+          </p>
         </section>
       </div>
     </main>
