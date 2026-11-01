@@ -251,7 +251,7 @@ export async function createOrder(
     const {
       data: product,
       error: productError,
-    } = await supabase
+    } = await orderWriter
       .from("exhibition_items")
       .select(`
         id,
