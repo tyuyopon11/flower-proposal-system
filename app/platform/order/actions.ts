@@ -1,5 +1,7 @@
 "use server";
 
+import "server-only";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { isShopPubliclyAccessible } from "@/lib/shops/publication";
@@ -77,14 +79,21 @@ function isValidDate(value: string): boolean {
     return false;
   }
 
-  const date = new Date(`${value}T00:00:00`);
+  const date = new Date(`${value}T00:00:00Z`);
 
-  return !Number.isNaN(date.getTime());
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 function validateInput(
   input: CreateOrderInput
 ): CreateOrderResult | null {
+  // Server Actions are callable independently of the form; validate runtime types.
+  if (!input || typeof input !== "object" ||
+      ![input.productId, input.companyName, input.buyerNumber, input.contactName,
+        input.phone, input.email, input.deliveryDate, input.note]
+        .every((value) => typeof value === "string")) {
+    return { success: false, message: "注文情報の形式が正しくありません。" };
+  }
   const productId = normalizeText(input.productId);
   const companyName = normalizeText(input.companyName);
   const buyerNumber = normalizeText(input.buyerNumber);
@@ -157,8 +166,8 @@ function validateInput(
   }
 
   if (
-    !Number.isInteger(input.quantity) ||
-    input.quantity < 1
+    !Number.isSafeInteger(input.quantity) ||
+    input.quantity < 1 || input.quantity > 2147483647
   ) {
     return {
       success: false,
@@ -206,7 +215,27 @@ export async function createOrder(
       };
     }
 
-    const companyName = normalizeText(input.companyName);
+    // A fresh service client has no user session. Use only after verified authentication.
+    const orderWriter = createAdminClient();
+    const { data: profile, error: profileError } = await orderWriter
+      .from("platform_users")
+      .select("auth_user_id,role,approval_status,is_active,buyer_no,branch_no,company_name")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    const buyerNo = typeof profile?.buyer_no === "string" ? profile.buyer_no.trim() : "";
+    // Optional registered branch: NULL/blank means no branch, never a wildcard.
+    const validBranch = profile?.branch_no === null || typeof profile?.branch_no === "string";
+    const branchNo = typeof profile?.branch_no === "string" ? profile.branch_no.trim() || null : null;
+    const companyName = typeof profile?.company_name === "string" ? profile.company_name.trim() : "";
+    if (profileError || !profile || profile.auth_user_id !== user.id ||
+        profile.role !== "buyer" || profile.approval_status !== "approved" ||
+        profile.is_active !== true || !buyerNo || !validBranch || !companyName) {
+      return { success: false, message: "承認済みの買参人情報を確認できませんでした。管理者へお問い合わせください。" };
+    }
+    const submittedBuyer = splitBuyerNumber(input.buyerNumber);
+    if (submittedBuyer.buyerNo !== buyerNo || submittedBuyer.branchNo !== branchNo) {
+      return { success: false, message: "買参番号・枝番がログイン中の会員情報と一致しません。" };
+    }
     const contactName = normalizeText(input.contactName);
     const phone = normalizeText(input.phone);
     const email = normalizeText(input.email);
@@ -214,10 +243,6 @@ export async function createOrder(
       input.deliveryDate
     );
     const note = normalizeText(input.note);
-
-    const { buyerNo, branchNo } = splitBuyerNumber(
-      input.buyerNumber
-    );
 
     /*
      * 保存直前に商品情報と在庫を再確認します。
@@ -267,18 +292,29 @@ export async function createOrder(
       };
     }
 
-    const availableQuantity =
-      product.quantity === null
-        ? null
-        : Number(product.quantity);
+    // Preserve the existing NULL = no quantity limit convention.
+    const availableQuantity = product.quantity === null ? null : Number(product.quantity);
     const salesUnit = "case";
-    const unitsPerSalesUnit = Math.max(
-      1,
-      Math.trunc(Number(product.irisu ?? 1))
-    );
-    const unitPrice = Number(product.price ?? 0);
+    const unitsPerSalesUnit = Number(product.irisu);
+    const unitPrice = Number(product.price);
+    // Only explicit NULL inventory is unlimited; malformed values still fail closed.
+    const missingTerm = [product.irisu, product.price]
+      .some((value) => value == null || String(value).trim() === "");
+    const invalidQuantity = availableQuantity !== null &&
+      (product.quantity === undefined || String(product.quantity).trim() === "" ||
+       !Number.isSafeInteger(availableQuantity) || availableQuantity < 0);
+    if (missingTerm || invalidQuantity ||
+        !Number.isSafeInteger(unitsPerSalesUnit) || unitsPerSalesUnit < 1 ||
+        !Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 9999999999.99) {
+      return { success: false, message: "商品の価格・入数・在庫情報を確認できませんでした。" };
+    }
     const totalUnits = calculateTotalUnits(unitsPerSalesUnit, input.quantity);
     const totalAmount = calculateLineAmount({ unitPrice, unitsPerSalesUnit, quantity: input.quantity });
+
+    if (!Number.isSafeInteger(totalUnits) || totalUnits > 2147483647 ||
+        !Number.isFinite(totalAmount) || totalAmount > 999999999999.99) {
+      return { success: false, message: "注文数量・金額が保存可能な範囲を超えています。" };
+    }
 
     const shopRelation = Array.isArray(product.shops)
       ? product.shops[0]
@@ -318,13 +354,8 @@ export async function createOrder(
       .eq("is_active", true)
       .maybeSingle();
 
-    const auctionDatesTableMissing =
-      configuredAuctionDateError?.code === "42P01" ||
-      configuredAuctionDateError?.message
-        .toLowerCase()
-        .includes("auction_dates");
-
-    if (configuredAuctionDateError && !auctionDatesTableMissing) {
+    // An unavailable calendar is not permission to accept an unconfigured date.
+    if (configuredAuctionDateError) {
       console.error(
         "Auction date validation error:",
         configuredAuctionDateError
@@ -340,7 +371,7 @@ export async function createOrder(
       !deliveryDate ||
       Number.isNaN(auctionDate.getTime()) ||
       !acceptsAuctionDay ||
-      (!auctionDatesTableMissing && !configuredAuctionDate)
+      !configuredAuctionDate
     ) {
       return {
         success: false,
@@ -348,27 +379,15 @@ export async function createOrder(
       };
     }
 
-    const cutoffAt = auctionCutoffAt(
-      deliveryDate,
-      Number(shopRelation.order_cutoff_hours ?? 24)
-    );
-    if (Date.now() >= cutoffAt.getTime()) {
+    const cutoffHours = Number(shopRelation.order_cutoff_hours ?? 24);
+    if (!Number.isFinite(cutoffHours) || cutoffHours < 0) {
+      return { success: false, message: "注文締切の設定を確認できませんでした。" };
+    }
+    const cutoffAt = auctionCutoffAt(deliveryDate, cutoffHours);
+    if (!Number.isFinite(cutoffAt.getTime()) || Date.now() >= cutoffAt.getTime()) {
       return {
         success: false,
         message: "この競り日の注文受付は締め切りました。",
-      };
-    }
-
-    const { data: orderNumber, error: orderNumberError } =
-      await supabase.rpc("next_lei_port_order_number", {
-        p_auction_date: deliveryDate,
-      });
-
-    if (orderNumberError || !orderNumber) {
-      console.error("Order number generation error:", orderNumberError);
-      return {
-        success: false,
-        message: "注文番号を発行できませんでした。時間をおいて再度お試しください。",
       };
     }
 
@@ -385,8 +404,21 @@ export async function createOrder(
       };
     }
 
+    const { data: orderNumber, error: orderNumberError } =
+      await supabase.rpc("next_lei_port_order_number", {
+        p_auction_date: deliveryDate,
+      });
+
+    if (orderNumberError || !orderNumber) {
+      console.error("Order number generation error:", orderNumberError);
+      return {
+        success: false,
+        message: "注文番号を発行できませんでした。時間をおいて再度お試しください。",
+      };
+    }
+
     const { data: order, error: insertError } =
-      await supabase
+      await orderWriter
         .from("exhibition_orders")
         .insert({
           item_id: productId,
@@ -444,7 +476,7 @@ export async function createOrder(
     }
 
     if (shopRelation?.contact_email) {
-      const { error: notificationError } = await supabase
+      const { error: notificationError } = await orderWriter
         .from("order_email_notifications")
         .insert({
           order_id: order.id,
